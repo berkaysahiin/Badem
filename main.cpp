@@ -14,28 +14,31 @@ public:
   explicit MethodBodyVisitor(ASTContext *Context) : Context(Context) {}
 
   bool VisitCXXMethodDecl(CXXMethodDecl *MD) {
-    if (MD->hasBody()) {
-      CXXRecordDecl *ParentClass = MD->getParent();
-      std::string ClassName = ParentClass->getNameAsString();
-      
-      std::string MethodName = MD->getNameAsString();
-      
-      SourceManager &SM = Context->getSourceManager();
-      SourceLocation Loc = MD->getLocation();
-      unsigned LineNum = SM.getSpellingLineNumber(Loc);
-      
-      llvm::outs() << "Class: " << ClassName << ", Method: " << MethodName 
-                  << " defined at line " << LineNum << "\n";
-      
-      Stmt *Body = MD->getBody();
-      if (Body) {
-        llvm::outs() << "  Body: ";
-        Body->printPretty(llvm::outs(), nullptr, PrintingPolicy(Context->getLangOpts()));
-        llvm::outs() << "\n\n";
-
-        analyzeMethodBody(Body, ClassName, MethodName);
-      }
+    if(!MD->hasBody() || !MD->isUserProvided()) {
+      return true;
     }
+
+    CXXRecordDecl *ParentClass = MD->getParent();
+
+    std::string ClassName = ParentClass->getNameAsString();
+    std::string MethodName = MD->getNameAsString();
+    
+    SourceManager &SM = Context->getSourceManager();
+    SourceLocation Loc = MD->getLocation();
+    unsigned LineNum = SM.getSpellingLineNumber(Loc);
+    
+    llvm::outs() << "Class: " << ClassName << ", Method: " << MethodName 
+                << " defined at line " << LineNum << "\n";
+    
+    Stmt *Body = MD->getBody();
+    if (Body) {
+      llvm::outs() << "  Body: ";
+      Body->printPretty(llvm::outs(), nullptr, PrintingPolicy(Context->getLangOpts()));
+      llvm::outs() << "\n\n";
+
+      analyzeMethodBody(Body, ClassName, MethodName);
+    }
+
     return true;
   }
   
