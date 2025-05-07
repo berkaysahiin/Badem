@@ -6,73 +6,142 @@
 #include "clang/Tooling/CommonOptionsParser.h"
 
 #include <llvm-14/llvm/Support/raw_ostream.h>
+#include <set>
 
 using namespace clang;
 
+class QueryGetVisitor;
+
 class MethodBodyVisitor : public RecursiveASTVisitor<MethodBodyVisitor> {
 public:
-  explicit MethodBodyVisitor(ASTContext *Context) : Context(Context) {}
+  explicit MethodBodyVisitor(ASTContext *context) : Context(context) {}
 
-  bool VisitCXXMethodDecl(CXXMethodDecl *MD) {
-    if(!MD->hasBody() || !MD->isUserProvided()) {
-      return true;
-    }
-
-    CXXRecordDecl *ParentClass = MD->getParent();
-
-    std::string ClassName = ParentClass->getNameAsString();
-    std::string MethodName = MD->getNameAsString();
-    
-    SourceManager &SM = Context->getSourceManager();
-    SourceLocation Loc = MD->getLocation();
-    unsigned LineNum = SM.getSpellingLineNumber(Loc);
-    
-    llvm::outs() << "Class: " << ClassName << ", Method: " << MethodName 
-                << " defined at line " << LineNum << "\n";
-    
-    Stmt *Body = MD->getBody();
-    if (Body) {
-      llvm::outs() << "  Body: ";
-      Body->printPretty(llvm::outs(), nullptr, PrintingPolicy(Context->getLangOpts()));
-      llvm::outs() << "\n\n";
-
-      analyzeMethodBody(Body, ClassName, MethodName);
-    }
-
-    return true;
-  }
-  
-  void analyzeMethodBody(Stmt *Body, const std::string &ClassName, const std::string &MethodName) {
-    unsigned ifCount = 0, forCount = 0, callCount = 0;
-    
-    class BodyStmtVisitor : public RecursiveASTVisitor<BodyStmtVisitor> {
-    public:
-      unsigned &IfCount;
-      unsigned &ForCount;
-      unsigned &CallCount;
-      
-      BodyStmtVisitor(unsigned &ifCount, unsigned &forCount, unsigned &callCount)
-        : IfCount(ifCount), ForCount(forCount), CallCount(callCount) {}
-      
-      bool VisitIfStmt(IfStmt *) { IfCount++; return true; }
-      bool VisitForStmt(ForStmt *) { ForCount++; return true; }
-      bool VisitCallExpr(CallExpr *) { CallCount++; return true; }
-    };
-    
-    BodyStmtVisitor bodyVisitor(ifCount, forCount, callCount);
-    bodyVisitor.TraverseStmt(Body);
-    
-    llvm::outs() << "  Analysis of " << ClassName << "::" << MethodName << ":\n"
-                << "    - If statements: " << ifCount << "\n"
-                << "    - For loops: " << forCount << "\n"
-                << "    - Function calls: " << callCount << "\n";
-  }
+  bool VisitCXXMethodDecl(CXXMethodDecl *methodDecl);
+  void analyzeMethodBody(Stmt *Body, const std::string &ClassName, const std::string &MethodName);
 
 private:
   ASTContext *Context;
 };
 
-// Standard AST consumer setup
+class QueryGetVisitor : public RecursiveASTVisitor<QueryGetVisitor> {
+public:
+  QueryGetVisitor(ASTContext *context, std::set<const FunctionDecl *> &visited)
+      : Context(context), Visited(visited) {}
+
+  bool VisitCallExpr(CallExpr *call);
+
+private:
+  ASTContext *Context;
+  std::set<const FunctionDecl *> &Visited;
+};
+
+bool MethodBodyVisitor::VisitCXXMethodDecl(CXXMethodDecl *methodDecl) {
+  if (!methodDecl->hasBody() || !methodDecl->isUserProvided())
+    return true;
+
+  std::string methodName = methodDecl->getNameInfo().getName().getAsString();
+
+  if (methodName != "on_init" &&
+      methodName != "on_post_init" &&
+      methodName != "on_update" &&
+      methodName != "on_play_update" &&
+      methodName != "on_play_start" &&
+      methodName != "on_play_late_start") {
+    return true;
+  }
+
+  CXXRecordDecl *parentClass = methodDecl->getParent();
+
+  bool isVariant = false;
+  for (const auto &base : parentClass->bases()) {
+    const Type *baseType = base.getType().getTypePtrOrNull();
+    if (!baseType)
+      continue;
+    const CXXRecordDecl *baseDecl = baseType->getAsCXXRecordDecl();
+    if (!baseDecl)
+      continue;
+
+    if (baseDecl->getNameAsString() == "VariantBase") {
+      isVariant = true;
+      break;
+    }
+  }
+
+  if (!isVariant)
+    return true;
+
+  std::string className = parentClass->getNameAsString();
+  Stmt *body = methodDecl->getBody();
+  if (body)
+    analyzeMethodBody(body, className, methodName);
+
+  return true;
+}
+
+void MethodBodyVisitor::analyzeMethodBody(Stmt *Body, const std::string &ClassName, const std::string &MethodName) {
+  std::set<const FunctionDecl *> visited;
+  QueryGetVisitor visitor(Context, visited);
+  visitor.TraverseStmt(Body);
+}
+
+bool QueryGetVisitor::VisitCallExpr(CallExpr *call) {
+  const FunctionDecl *funcDecl = call->getDirectCallee();
+  if (!funcDecl)
+    return true;
+
+  std::string qualifiedName = funcDecl->getQualifiedNameAsString();
+
+  if (qualifiedName.compare(0, 5, "std::") == 0 || qualifiedName.compare(0, 6, "rttr::") == 0)
+    return true;
+
+  if (qualifiedName.find("Query::get") != std::string::npos) {
+    if (call->getNumArgs() == 1) {
+      Expr *arg = call->getArg(0);
+      QualType argType = arg->getType();
+
+      if (argType->isPointerType()) {
+        QualType pointee = argType->getPointeeType();
+        if (const CXXRecordDecl *record = pointee->getAsCXXRecordDecl()) {
+          if (record->getNameAsString() == "VariantBase") {
+            llvm::outs() << "    - Detected Query::get with VariantBase* at: "
+                       << qualifiedName << "\n";
+
+            if (const auto *specInfo = funcDecl->getTemplateSpecializationInfo()) {
+              const TemplateArgumentList *templateArgs = specInfo->TemplateArguments;
+              if (templateArgs && templateArgs->size() > 0) {
+                llvm::outs() << "      - Template argument(s): ";
+                for (unsigned i = 0; i < templateArgs->size(); ++i) {
+                  const TemplateArgument &arg = templateArgs->get(i);
+                  if (arg.getKind() == TemplateArgument::Type) {
+                    llvm::outs() << arg.getAsType().getAsString() << " ";
+                  } else if (arg.getKind() == TemplateArgument::Pack) {
+                    for (const auto &packArg : arg.pack_elements()) {
+                      if (packArg.getKind() == TemplateArgument::Type) {
+                        llvm::outs() << packArg.getAsType().getAsString() << " ";
+                      }
+                    }
+                  }
+                }
+                llvm::outs() << "\n";
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (funcDecl->hasBody() && funcDecl->isUserProvided()) {
+    if (Visited.insert(funcDecl).second) {
+      Stmt *calleeBody = funcDecl->getBody();
+      QueryGetVisitor subVisitor(Context, Visited);
+      subVisitor.TraverseStmt(calleeBody);
+    }
+  }
+
+  return true;
+}
+
 class MethodBodyConsumer : public ASTConsumer {
 public:
   explicit MethodBodyConsumer(ASTContext *Context) : Visitor(Context) {}
@@ -96,19 +165,18 @@ public:
 int main(int argc, const char **argv) {
   if (argc > 1) {
     static llvm::cl::OptionCategory MethodAnalyzerCategory("method-analyzer options");
-    
+
     auto ExpectedParser = clang::tooling::CommonOptionsParser::create(argc, argv, MethodAnalyzerCategory);
-    
     if (!ExpectedParser) {
       llvm::errs() << ExpectedParser.takeError();
       return 1;
     }
-    
-    clang::tooling::CommonOptionsParser& OP = ExpectedParser.get();
-    
+
+    clang::tooling::CommonOptionsParser &OP = ExpectedParser.get();
     clang::tooling::ClangTool Tool(OP.getCompilations(), OP.getSourcePathList());
-    
+
     return Tool.run(clang::tooling::newFrontendActionFactory<MethodBodyAction>().get());
   }
+
   return 0;
 }
