@@ -10,15 +10,12 @@ bool QueryVisitor::VisitCXXMethodDecl(CXXMethodDecl *methodDecl) {
 
     std::string methodName = methodDecl->getNameInfo().getName().getAsString();
 
-    llvm::outs() << "Will Analyze method: " << methodName << "\n";
-
     if (kTrackedMethods.find(methodName) == kTrackedMethods.end()) {
         return true;
     }
 
     CXXRecordDecl *parentClass = methodDecl->getParent();
     currentVariantClass = parentClass->getNameAsString();
-
 
     analyzeMethod(methodDecl);
 
@@ -36,14 +33,16 @@ bool QueryVisitor::VisitCallExpr(CallExpr *call) {
     return true;
   }
 
-  if(skipFunction(funcDecl)) {
+  if(isQuery(funcDecl)) {
+    processCurrentCall(call, funcDecl);
     return true;
   }
 
-  bool foundQuery = processCurrentCall(call, funcDecl);
-
-  if(!foundQuery && !skipFunction(funcDecl)) {
+  if(!skipFunction(funcDecl)) {
       visitCalledFunctionBody(funcDecl);
+  }
+  else {
+      llvm::outs() << "Skipped: " << funcDecl->getQualifiedNameAsString() << "\n";
   }
 
   return true;
@@ -51,24 +50,23 @@ bool QueryVisitor::VisitCallExpr(CallExpr *call) {
 
 bool QueryVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl) {
   const std::string_view qualifiedName = funcDecl->getQualifiedNameAsString();
-  bool isGetQuery = qualifiedName.find(kQueryGet) != std::string_view::npos;
   bool isReadQuery = qualifiedName.find(kQueryRead) != std::string_view::npos;
-
-  if(isGetQuery || isReadQuery) {
-    detectVariantBaseQueryCalls(call, funcDecl, isReadQuery);
-  }
+  detectVariantBaseQueryCalls(call, funcDecl, isReadQuery);
 
   return false;
 }
 
-bool QueryVisitor::skipFunction(const FunctionDecl* fd) {
+bool QueryVisitor::isQuery(const FunctionDecl* fd) {
   const std::string_view qualifiedName = fd->getQualifiedNameAsString();
-  bool isGetQuery = qualifiedName.find(kQueryGet) != std::string_view::npos;
-  bool isReadQuery = qualifiedName.find(kQueryRead) != std::string_view::npos;
+  const bool isQuery = qualifiedName.find(kQuery) != std::string_view::npos;
+  return isQuery;
+}
 
-  if(isGetQuery || isReadQuery) {
-    return false;
+bool QueryVisitor::skipFunction(const FunctionDecl* fd) {
+  if(!fd) {
+    return true;
   }
+
 
   SourceLocation loc = fd->getLocation();
   
@@ -97,10 +95,6 @@ bool QueryVisitor::skipFunction(const FunctionDecl* fd) {
 }
 
 void QueryVisitor::visitCalledFunctionBody(const FunctionDecl *funcDecl) {
-  if(skipFunction(funcDecl)) {
-    return;
-  }
-
   std::string qualifiedName = funcDecl->getQualifiedNameAsString();
 
   if (!funcDecl->hasBody() || !funcDecl->isUserProvided()) {

@@ -10,9 +10,9 @@ workspace "ClangMethodAnalyzer"
         files { "source/**.cpp" }
         targetdir "bin/%{cfg.buildcfg}"
         
-        cppdialect "C++17"
+        cppdialect "C++20"
         
-        buildoptions { "`llvm-config --cxxflags`", "-std=c++17"}
+        buildoptions { "`llvm-config --cxxflags`", "-std=c++20"}
         linkoptions { "`llvm-config --ldflags`" }
 
         includedirs {

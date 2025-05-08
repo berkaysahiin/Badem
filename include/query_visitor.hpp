@@ -19,6 +19,7 @@ public:
 
 private:
   void analyzeMethod(CXXMethodDecl* md);
+  bool isQuery(const FunctionDecl *funcDecl);
   bool processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl);
   void visitCalledFunctionBody(const FunctionDecl *funcDecl);
   bool skipFunction(const FunctionDecl* fd);
@@ -36,6 +37,7 @@ private:
   static constexpr std::string_view kVariantBase = "VariantBase";
   static constexpr std::string_view kQueryGet = "Query::get";
   static constexpr std::string_view kQueryRead = "Query::read";
+  static constexpr std::string_view kQuery = "Query::";
 
   static inline const std::set<std::string_view> kTrackedMethods = {
     "on_init", "on_post_init", "on_update", 
