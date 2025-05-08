@@ -2,6 +2,7 @@
 
 bool QueryGetVisitor::VisitCallExpr(CallExpr *call) {
   const FunctionDecl *funcDecl = call->getDirectCallee();
+
   if (!funcDecl)
     return true;
 
