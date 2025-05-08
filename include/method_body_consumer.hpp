@@ -10,9 +10,7 @@ class MethodBodyConsumer : public ASTConsumer {
 public:
   explicit MethodBodyConsumer(ASTContext *Context) : Visitor(Context) {}
 
-  void HandleTranslationUnit(ASTContext &context) override {
-    Visitor.TraverseDecl(context.getTranslationUnitDecl());
-  }
+  virtual void HandleTranslationUnit(ASTContext &context) override;
 
 private:
   MethodBodyVisitor Visitor;

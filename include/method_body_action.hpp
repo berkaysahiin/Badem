@@ -9,8 +9,6 @@ using namespace clang;
 
 class MethodBodyAction : public ASTFrontendAction {
 public:
-  virtual std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance& compilerInstance, StringRef file) override {
-    return std::make_unique<MethodBodyConsumer>(&compilerInstance.getASTContext());
-  }
+  virtual std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance& compilerInstance, StringRef file) override;
 };
 
