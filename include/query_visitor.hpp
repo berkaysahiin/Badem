@@ -12,6 +12,35 @@ public:
   explicit QueryVisitor(ASTContext *context) 
     : Context(context) {}
 
+  ~QueryVisitor() {
+    if(currentVariantClass.empty()) {
+      return;
+    }
+
+    if(variantWriteDependency[currentVariantClass].empty()) {
+      return;
+    }
+      std::string filename = currentVariantClass + ".astrequires";
+      std::ofstream outFile(filename);
+      
+      if (!outFile.is_open()) {
+        llvm::errs() << "Error: Could not open file " << filename << " for writing\n";
+        return;
+      }
+      
+      for (const auto& [variant, dependencies] : variantWriteDependency) {
+        outFile << "Variant: " << variant << "\n";
+        outFile << "Dependencies:\n";
+        for (const auto& dep : dependencies) {
+          outFile << "  - " << dep << "\n";
+        }
+        outFile << "\n";
+      }
+      
+      outFile.close();
+      llvm::outs() << "Variant dependencies written to " << filename << "\n";
+  }
+
   bool VisitCXXMethodDecl(CXXMethodDecl *methodDecl);
   bool VisitCallExpr(CallExpr *call);
 

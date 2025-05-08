@@ -141,12 +141,16 @@ void QueryVisitor::printTemplateArguments(const FunctionDecl *funcDecl) {
 
 void QueryVisitor::printTemplateArgument(const TemplateArgument &arg) {
   if (arg.getKind() == TemplateArgument::Type) {
-      llvm::outs() << "Variant: " << currentVariantClass << ", Dependency: " << arg.getAsType().getAsString() << "\n";;
+      std::string dependencyType = arg.getAsType().getAsString();
+      variantWriteDependency[currentVariantClass].insert(dependencyType);
+      llvm::outs() << "Variant: " << currentVariantClass << ", Dependency: " << dependencyType << "\n";
   }
   else if (arg.getKind() == TemplateArgument::Pack) {
     for (const auto &packArg : arg.pack_elements()) {
       if (packArg.getKind() == TemplateArgument::Type) {
-          llvm::outs() << "Variant: " << currentVariantClass << ", Dependency: " << packArg.getAsType().getAsString() << "\n";;
+          std::string dependencyType = packArg.getAsType().getAsString();
+          variantWriteDependency[currentVariantClass].insert(dependencyType);
+          llvm::outs() << "Variant: " << currentVariantClass << ", Dependency: " << dependencyType << "\n";
       }
     }
   }
