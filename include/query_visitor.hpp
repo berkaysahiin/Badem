@@ -7,13 +7,6 @@
 
 using namespace clang;
 
-enum class QueryType {
-  None,
-  Get,
-  Read,
-  Length
-};
-
 class QueryVisitor : public RecursiveASTVisitor<QueryVisitor> {
 public:
   explicit QueryVisitor(ASTContext *context) 
@@ -29,9 +22,9 @@ private:
   bool processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl);
   void visitCalledFunctionBody(const FunctionDecl *funcDecl);
   bool skipFunction(const FunctionDecl* fd);
-  void detectVariantBaseQueryCalls(CallExpr *call, const FunctionDecl *funcDecl, const std::string &qualifiedName);
+  void detectVariantBaseQueryCalls(CallExpr *call, const FunctionDecl *funcDecl, const bool isReadQuery);
   bool isVariantBasePointer(QualType type);
-  void processTemplateArgument(const TemplateArgument &arg, bool isReadQuery);
+  void processTemplateArgument(const TemplateArgument &arg, std::set<std::string>& dependencySet);
 
   ASTContext *Context;
   std::set<const FunctionDecl *> Visited;
@@ -39,4 +32,14 @@ private:
   std::string currentVariantClass;
   std::unordered_map<std::string, std::set<std::string>> variantWriteDependency;
   std::unordered_map<std::string, std::set<std::string>> variantReadDependency; 
+
+  static constexpr std::string_view kVariantBase = "VariantBase";
+  static constexpr std::string_view kQueryGet = "Query::get";
+  static constexpr std::string_view kQueryRead = "Query::read";
+
+  static inline const std::set<std::string_view> kTrackedMethods = {
+    "on_init", "on_post_init", "on_update", 
+    "on_play_update", "on_play_start", "on_play_late_start"
+  };
+
 };

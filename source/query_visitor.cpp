@@ -1,6 +1,7 @@
 #include "query_visitor.hpp"
 #include "clang/Basic/SourceManager.h"
 #include <llvm-14/llvm/Support/raw_ostream.h>
+#include <string_view>
 
 bool QueryVisitor::VisitCXXMethodDecl(CXXMethodDecl *methodDecl) {
     if (!methodDecl->hasBody() || !methodDecl->isUserProvided()) {
@@ -9,14 +10,15 @@ bool QueryVisitor::VisitCXXMethodDecl(CXXMethodDecl *methodDecl) {
 
     std::string methodName = methodDecl->getNameInfo().getName().getAsString();
 
-    if (methodName != "on_init" && methodName != "on_post_init" &&
-        methodName != "on_update" && methodName != "on_play_update" &&
-        methodName != "on_play_start" && methodName != "on_play_late_start") {
+    llvm::outs() << "Will Analyze method: " << methodName << "\n";
+
+    if (kTrackedMethods.find(methodName) == kTrackedMethods.end()) {
         return true;
     }
 
     CXXRecordDecl *parentClass = methodDecl->getParent();
     currentVariantClass = parentClass->getNameAsString();
+
 
     analyzeMethod(methodDecl);
 
@@ -34,6 +36,10 @@ bool QueryVisitor::VisitCallExpr(CallExpr *call) {
     return true;
   }
 
+  if(skipFunction(funcDecl)) {
+    return true;
+  }
+
   bool foundQuery = processCurrentCall(call, funcDecl);
 
   if(!foundQuery && !skipFunction(funcDecl)) {
@@ -44,22 +50,26 @@ bool QueryVisitor::VisitCallExpr(CallExpr *call) {
 }
 
 bool QueryVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl) {
-  std::string qualifiedName = funcDecl->getQualifiedNameAsString();
+  const std::string_view qualifiedName = funcDecl->getQualifiedNameAsString();
+  bool isGetQuery = qualifiedName.find(kQueryGet) != std::string_view::npos;
+  bool isReadQuery = qualifiedName.find(kQueryRead) != std::string_view::npos;
 
-  if (qualifiedName.find("Query::get") != std::string::npos) {
-    detectVariantBaseQueryCalls(call, funcDecl, qualifiedName);
-    return true;
-  }
-
-  if (qualifiedName.find("Query::read") != std::string::npos) {
-    detectVariantBaseQueryCalls(call, funcDecl, qualifiedName);
-    return true;
+  if(isGetQuery || isReadQuery) {
+    detectVariantBaseQueryCalls(call, funcDecl, isReadQuery);
   }
 
   return false;
 }
 
 bool QueryVisitor::skipFunction(const FunctionDecl* fd) {
+  const std::string_view qualifiedName = fd->getQualifiedNameAsString();
+  bool isGetQuery = qualifiedName.find(kQueryGet) != std::string_view::npos;
+  bool isReadQuery = qualifiedName.find(kQueryRead) != std::string_view::npos;
+
+  if(isGetQuery || isReadQuery) {
+    return false;
+  }
+
   SourceLocation loc = fd->getLocation();
   
   if (loc.isInvalid()) {
@@ -102,20 +112,16 @@ void QueryVisitor::visitCalledFunctionBody(const FunctionDecl *funcDecl) {
   }
 }
 
-void QueryVisitor::detectVariantBaseQueryCalls(CallExpr *call, const FunctionDecl *funcDecl, const std::string &qualifiedName) {
-  if (call->getNumArgs() < 1) { // no argument ?, suss
+void QueryVisitor::detectVariantBaseQueryCalls(CallExpr *call, const FunctionDecl *funcDecl, const bool isReadQuery) {
+  if (call->getNumArgs() < 1) { 
     return;
   }
 
-  Expr *arg = call->getArg(0);
+  const Expr* arg = call->getArg(0);
 
-  // we assume that the client code will only use variantbase* overload of query function
-  // in case of entity_id overload, its not possible to detect whether the query is for this entity variant or for another entity's variant
   if (!isVariantBasePointer(arg->getType())) { 
       return;
   }
-
-  bool isReadQuery = qualifiedName.find("Query::read") != std::string::npos;
 
   const auto *specInfo = funcDecl->getTemplateSpecializationInfo();
   if (!specInfo)
@@ -126,29 +132,23 @@ void QueryVisitor::detectVariantBaseQueryCalls(CallExpr *call, const FunctionDec
       return;
   }
 
+  auto& dependencyMap = isReadQuery ? variantReadDependency : variantWriteDependency;
+  auto& currentSet = dependencyMap[currentVariantClass];
+
   for (unsigned i = 0; i < templateArgs->size(); ++i) {
-    processTemplateArgument(templateArgs->get(i), isReadQuery);
+    processTemplateArgument(templateArgs->get(i), currentSet);
   }
+
 }
 
-void QueryVisitor::processTemplateArgument(const TemplateArgument &arg, bool isReadQuery) {
+void QueryVisitor::processTemplateArgument(const TemplateArgument &arg, std::set<std::string>& dependencySet) {
   if (arg.getKind() == TemplateArgument::Type) {
-      std::string dependency = arg.getAsType().getAsString();
-      if (isReadQuery) {
-          variantReadDependency[currentVariantClass].insert(dependency);
-      } else {
-          variantWriteDependency[currentVariantClass].insert(dependency);
-      }
+      dependencySet.insert(arg.getAsType().getAsString());
   }
   else if (arg.getKind() == TemplateArgument::Pack) {
     for (const auto &packArg : arg.pack_elements()) {
       if (packArg.getKind() == TemplateArgument::Type) {
-          std::string dependency = packArg.getAsType().getAsString();
-          if (isReadQuery) {
-              variantReadDependency[currentVariantClass].insert(dependency);
-          } else {
-              variantWriteDependency[currentVariantClass].insert(dependency);
-          }
+          dependencySet.insert(packArg.getAsType().getAsString());
       }
     }
   }
@@ -159,10 +159,10 @@ bool QueryVisitor::isVariantBasePointer(QualType type) {
       return false;
   }
 
-  QualType pointee = type->getPointeeType();
-  const CXXRecordDecl *record = pointee->getAsCXXRecordDecl();
+  const QualType pointee = type->getPointeeType();
+  const CXXRecordDecl* record = pointee->getAsCXXRecordDecl();
 
-  return record && record->getNameAsString() == "VariantBase";
+  return record && record->getNameAsString() == kVariantBase;
 }
 
 void QueryVisitor::writeDependenciesToCSV() {
