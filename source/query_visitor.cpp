@@ -41,9 +41,6 @@ bool QueryVisitor::VisitCallExpr(CallExpr *call) {
   if(!skipFunction(funcDecl)) {
       visitCalledFunctionBody(funcDecl);
   }
-  else {
-      llvm::outs() << "Skipped: " << funcDecl->getQualifiedNameAsString() << "\n";
-  }
 
   return true;
 }
