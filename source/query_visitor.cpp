@@ -1,4 +1,6 @@
 #include "query_visitor.hpp"
+#include "clang/Basic/SourceManager.h"
+#include <llvm-14/llvm/Support/raw_ostream.h>
 
 bool QueryVisitor::VisitCXXMethodDecl(CXXMethodDecl *methodDecl) {
     if (!methodDecl->hasBody() || !methodDecl->isUserProvided()) {
@@ -28,12 +30,13 @@ void QueryVisitor::analyzeMethod(CXXMethodDecl *md) {
 bool QueryVisitor::VisitCallExpr(CallExpr *call) {
   const FunctionDecl *funcDecl = call->getDirectCallee();
 
-  if (!funcDecl || skipFunction(funcDecl)) {
+  if (!funcDecl) {
     return true;
   }
 
-  bool foundQueryCall = processCurrentCall(call, funcDecl);
-  if(!foundQueryCall && !skipFunction(funcDecl)) {
+  bool foundQuery = processCurrentCall(call, funcDecl);
+
+  if(!foundQuery && !skipFunction(funcDecl)) {
       visitCalledFunctionBody(funcDecl);
   }
 
@@ -42,7 +45,6 @@ bool QueryVisitor::VisitCallExpr(CallExpr *call) {
 
 bool QueryVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl) {
   std::string qualifiedName = funcDecl->getQualifiedNameAsString();
-  llvm::outs() << "Processing call: " << qualifiedName << "\n";
 
   if (qualifiedName.find("Query::get") != std::string::npos) {
     detectVariantBaseQueryCalls(call, funcDecl, qualifiedName);
@@ -53,21 +55,39 @@ bool QueryVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDe
 }
 
 bool QueryVisitor::skipFunction(const FunctionDecl* fd) {
-  std::string qualifiedName = fd->getQualifiedNameAsString();
-
-  if (qualifiedName.compare(0, 5, "std::") == 0 ||
-      qualifiedName.compare(0, 6, "rttr::") == 0 ||
-      qualifiedName.compare(0, 11, "rapidjson::") == 0
-      )
-  {
-      //llvm::outs() << "Skipping call: " << qualifiedName << "\n";
+  SourceLocation loc = fd->getLocation();
+  
+  if (loc.isInvalid()) {
       return true;
   }
+  
+  if (Context->getSourceManager().isInSystemHeader(loc)) {
+      return true;
+  }
+  
+  FileID fileID = Context->getSourceManager().getFileID(loc);
+  const FileEntry* fileEntry = Context->getSourceManager().getFileEntryForID(fileID);
+  
+  if (!fileEntry) {
+      return true;
+  }
+  
+  llvm::StringRef filePath = fileEntry->getName();
 
-  return false;
+  if (filePath.find("/game/") != llvm::StringRef::npos) {
+      return false;  
+  }
+  
+  return true;
 }
 
 void QueryVisitor::visitCalledFunctionBody(const FunctionDecl *funcDecl) {
+  if(skipFunction(funcDecl)) {
+    return;
+  }
+
+  std::string qualifiedName = funcDecl->getQualifiedNameAsString();
+
   if (!funcDecl->hasBody() || !funcDecl->isUserProvided()) {
       return;
   }
