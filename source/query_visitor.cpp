@@ -14,61 +14,57 @@ bool QueryVisitor::VisitCXXMethodDecl(CXXMethodDecl *methodDecl) {
     }
 
     CXXRecordDecl *parentClass = methodDecl->getParent();
+    currentVariantClass = parentClass->getNameAsString();
 
-    bool isVariant = false;
-    for (const auto &base : parentClass->bases()) {
-        const Type *baseType = base.getType().getTypePtrOrNull();
-        if (!baseType) {
-            continue;
-        }
-
-        const CXXRecordDecl *baseDecl = baseType->getAsCXXRecordDecl();
-        if (!baseDecl) {
-            continue;
-        }
-
-        if (baseDecl->getNameAsString() == "VariantBase") {
-            isVariant = true;
-            break;
-        }
-    }
-
-    if (!isVariant)
-        return true;
-
-    if (Stmt* body = methodDecl->getBody()) {
-        analyzeMethodBody(body);
-    }
+    analyzeMethod(methodDecl);
 
     return true;
 }
 
-void QueryVisitor::analyzeMethodBody(Stmt *body) {
-    TraverseStmt(body);
+void QueryVisitor::analyzeMethod(CXXMethodDecl *md) {
+    TraverseStmt(md->getBody());
 }
 
 bool QueryVisitor::VisitCallExpr(CallExpr *call) {
   const FunctionDecl *funcDecl = call->getDirectCallee();
 
-  if (!funcDecl)
+  if (!funcDecl || skipFunction(funcDecl)) {
     return true;
+  }
 
-  processCurrentCall(call, funcDecl);
-  visitCalledFunctionBody(funcDecl);
+  bool foundQueryCall = processCurrentCall(call, funcDecl);
+  if(!foundQueryCall && !skipFunction(funcDecl)) {
+      visitCalledFunctionBody(funcDecl);
+  }
 
   return true;
 }
 
-void QueryVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl) {
+bool QueryVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl) {
   std::string qualifiedName = funcDecl->getQualifiedNameAsString();
-
-  if (qualifiedName.compare(0, 5, "std::") == 0 || qualifiedName.compare(0, 6, "rttr::") == 0) {
-      return;
-  }
+  llvm::outs() << "Processing call: " << qualifiedName << "\n";
 
   if (qualifiedName.find("Query::get") != std::string::npos) {
     detectVariantBaseQueryCalls(call, funcDecl, qualifiedName);
+    return true;
   }
+
+  return false;
+}
+
+bool QueryVisitor::skipFunction(const FunctionDecl* fd) {
+  std::string qualifiedName = fd->getQualifiedNameAsString();
+
+  if (qualifiedName.compare(0, 5, "std::") == 0 ||
+      qualifiedName.compare(0, 6, "rttr::") == 0 ||
+      qualifiedName.compare(0, 11, "rapidjson::") == 0
+      )
+  {
+      //llvm::outs() << "Skipping call: " << qualifiedName << "\n";
+      return true;
+  }
+
+  return false;
 }
 
 void QueryVisitor::visitCalledFunctionBody(const FunctionDecl *funcDecl) {
@@ -114,26 +110,23 @@ void QueryVisitor::printTemplateArguments(const FunctionDecl *funcDecl) {
     return;
 
   const TemplateArgumentList *templateArgs = specInfo->TemplateArguments;
-  if (!templateArgs || templateArgs->size() == 0)
-    return;
-
-  llvm::outs() << "      - Template argument(s): ";
+  if (!templateArgs || templateArgs->size() == 0) {
+      return;
+  }
 
   for (unsigned i = 0; i < templateArgs->size(); ++i) {
     printTemplateArgument(templateArgs->get(i));
   }
-
-  llvm::outs() << "\n";
 }
 
 void QueryVisitor::printTemplateArgument(const TemplateArgument &arg) {
   if (arg.getKind() == TemplateArgument::Type) {
-    llvm::outs() << arg.getAsType().getAsString() << " ";
+      llvm::outs() << "Variant: " << currentVariantClass << ", Dependency: " << arg.getAsType().getAsString() << "\n";;
   }
   else if (arg.getKind() == TemplateArgument::Pack) {
     for (const auto &packArg : arg.pack_elements()) {
       if (packArg.getKind() == TemplateArgument::Type) {
-        llvm::outs() << packArg.getAsType().getAsString() << " ";
+          llvm::outs() << "Variant: " << currentVariantClass << ", Dependency: " << packArg.getAsType().getAsString() << "\n";;
       }
     }
   }
