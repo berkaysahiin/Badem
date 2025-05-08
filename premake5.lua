@@ -7,13 +7,17 @@ workspace "ClangMethodAnalyzer"
         kind "ConsoleApp"
         language "C++"
         
-        files { "main.cpp"}
+        files { "source/**.cpp" }
         targetdir "bin/%{cfg.buildcfg}"
         
         cppdialect "C++20"
         
         buildoptions { "`llvm-config --cxxflags`" }
         linkoptions { "`llvm-config --ldflags`" }
+
+        includedirs {
+            "include"
+        }
         
         links { 
             "clangTooling",
