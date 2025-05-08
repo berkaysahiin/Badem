@@ -51,6 +51,11 @@ bool QueryVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDe
     return true;
   }
 
+  if (qualifiedName.find("Query::read") != std::string::npos) {
+    detectVariantBaseQueryCalls(call, funcDecl, qualifiedName);
+    return true;
+  }
+
   return false;
 }
 
@@ -110,7 +115,43 @@ void QueryVisitor::detectVariantBaseQueryCalls(CallExpr *call, const FunctionDec
       return;
   }
 
-  printTemplateArguments(funcDecl);
+  bool isReadQuery = qualifiedName.find("Query::read") != std::string::npos;
+
+  const auto *specInfo = funcDecl->getTemplateSpecializationInfo();
+  if (!specInfo)
+    return;
+
+  const TemplateArgumentList *templateArgs = specInfo->TemplateArguments;
+  if (!templateArgs || templateArgs->size() == 0) {
+      return;
+  }
+
+  for (unsigned i = 0; i < templateArgs->size(); ++i) {
+    processTemplateArgument(templateArgs->get(i), isReadQuery);
+  }
+}
+
+void QueryVisitor::processTemplateArgument(const TemplateArgument &arg, bool isReadQuery) {
+  if (arg.getKind() == TemplateArgument::Type) {
+      std::string dependency = arg.getAsType().getAsString();
+      if (isReadQuery) {
+          variantReadDependency[currentVariantClass].insert(dependency);
+      } else {
+          variantWriteDependency[currentVariantClass].insert(dependency);
+      }
+  }
+  else if (arg.getKind() == TemplateArgument::Pack) {
+    for (const auto &packArg : arg.pack_elements()) {
+      if (packArg.getKind() == TemplateArgument::Type) {
+          std::string dependency = packArg.getAsType().getAsString();
+          if (isReadQuery) {
+              variantReadDependency[currentVariantClass].insert(dependency);
+          } else {
+              variantWriteDependency[currentVariantClass].insert(dependency);
+          }
+      }
+    }
+  }
 }
 
 bool QueryVisitor::isVariantBasePointer(QualType type) {
@@ -124,34 +165,40 @@ bool QueryVisitor::isVariantBasePointer(QualType type) {
   return record && record->getNameAsString() == "VariantBase";
 }
 
-void QueryVisitor::printTemplateArguments(const FunctionDecl *funcDecl) {
-  const auto *specInfo = funcDecl->getTemplateSpecializationInfo();
-  if (!specInfo)
-    return;
-
-  const TemplateArgumentList *templateArgs = specInfo->TemplateArguments;
-  if (!templateArgs || templateArgs->size() == 0) {
-      return;
+void QueryVisitor::writeDependenciesToCSV() {
+  if(currentVariantClass.empty()) {
+        return;
   }
 
-  for (unsigned i = 0; i < templateArgs->size(); ++i) {
-    printTemplateArgument(templateArgs->get(i));
-  }
-}
-
-void QueryVisitor::printTemplateArgument(const TemplateArgument &arg) {
-  if (arg.getKind() == TemplateArgument::Type) {
-      std::string dependencyType = arg.getAsType().getAsString();
-      variantWriteDependency[currentVariantClass].insert(dependencyType);
-      llvm::outs() << "Variant: " << currentVariantClass << ", Dependency: " << dependencyType << "\n";
-  }
-  else if (arg.getKind() == TemplateArgument::Pack) {
-    for (const auto &packArg : arg.pack_elements()) {
-      if (packArg.getKind() == TemplateArgument::Type) {
-          std::string dependencyType = packArg.getAsType().getAsString();
-          variantWriteDependency[currentVariantClass].insert(dependencyType);
-          llvm::outs() << "Variant: " << currentVariantClass << ", Dependency: " << dependencyType << "\n";
-      }
+    std::string filename = currentVariantClass + ".astrequires";
+    std::ofstream csvFile(filename);
+    
+    if (!csvFile.is_open()) {
+        llvm::errs() << "Error: Could not open file " << filename << " for writing\n";
+        return;
     }
-  }
+    
+    csvFile << "Write,";
+    
+    for (const auto &pair : variantWriteDependency) {
+        const std::string &variant = pair.first;
+        for (const std::string &dependency : pair.second) {
+            csvFile << dependency << ",";
+        }
+    }
+    
+    csvFile << "\n";
+    csvFile << "Read,";
+
+    for (const auto &pair : variantReadDependency) {
+        const std::string &variant = pair.first;
+        for (const std::string &dependency : pair.second) {
+            csvFile << dependency << ",";
+        }
+    }
+
+    csvFile << "\n";
+    
+    csvFile.close();
+    llvm::outs() << "Dependencies written to " << filename << "\n";
 }

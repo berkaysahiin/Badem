@@ -2,4 +2,5 @@
 
 void MethodBodyConsumer::HandleTranslationUnit(ASTContext &context) {
     Visitor.TraverseDecl(context.getTranslationUnitDecl());
+    Visitor.writeDependenciesToCSV();
 }
