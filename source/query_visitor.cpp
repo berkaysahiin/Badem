@@ -1,6 +1,53 @@
-#include "query_get_visitor.hpp"
+#include "query_visitor.hpp"
 
-bool QueryGetVisitor::VisitCallExpr(CallExpr *call) {
+bool QueryVisitor::VisitCXXMethodDecl(CXXMethodDecl *methodDecl) {
+    if (!methodDecl->hasBody() || !methodDecl->isUserProvided()) {
+        return true;
+    }
+
+    std::string methodName = methodDecl->getNameInfo().getName().getAsString();
+
+    if (methodName != "on_init" && methodName != "on_post_init" &&
+        methodName != "on_update" && methodName != "on_play_update" &&
+        methodName != "on_play_start" && methodName != "on_play_late_start") {
+        return true;
+    }
+
+    CXXRecordDecl *parentClass = methodDecl->getParent();
+
+    bool isVariant = false;
+    for (const auto &base : parentClass->bases()) {
+        const Type *baseType = base.getType().getTypePtrOrNull();
+        if (!baseType) {
+            continue;
+        }
+
+        const CXXRecordDecl *baseDecl = baseType->getAsCXXRecordDecl();
+        if (!baseDecl) {
+            continue;
+        }
+
+        if (baseDecl->getNameAsString() == "VariantBase") {
+            isVariant = true;
+            break;
+        }
+    }
+
+    if (!isVariant)
+        return true;
+
+    if (Stmt* body = methodDecl->getBody()) {
+        analyzeMethodBody(body);
+    }
+
+    return true;
+}
+
+void QueryVisitor::analyzeMethodBody(Stmt *body) {
+    TraverseStmt(body);
+}
+
+bool QueryVisitor::VisitCallExpr(CallExpr *call) {
   const FunctionDecl *funcDecl = call->getDirectCallee();
 
   if (!funcDecl)
@@ -12,7 +59,7 @@ bool QueryGetVisitor::VisitCallExpr(CallExpr *call) {
   return true;
 }
 
-void QueryGetVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl) {
+void QueryVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl) {
   std::string qualifiedName = funcDecl->getQualifiedNameAsString();
 
   if (qualifiedName.compare(0, 5, "std::") == 0 || qualifiedName.compare(0, 6, "rttr::") == 0) {
@@ -24,18 +71,17 @@ void QueryGetVisitor::processCurrentCall(CallExpr *call, const FunctionDecl *fun
   }
 }
 
-void QueryGetVisitor::visitCalledFunctionBody(const FunctionDecl *funcDecl) {
+void QueryVisitor::visitCalledFunctionBody(const FunctionDecl *funcDecl) {
   if (!funcDecl->hasBody() || !funcDecl->isUserProvided()) {
       return;
   }
 
   if (Visited.insert(funcDecl).second) {
-      QueryGetVisitor subVisitor(Context, Visited);
-      subVisitor.TraverseStmt(funcDecl->getBody());
+      TraverseStmt(funcDecl->getBody());
   }
 }
 
-void QueryGetVisitor::detectVariantBaseQueryCalls(CallExpr *call, const FunctionDecl *funcDecl, const std::string &qualifiedName) {
+void QueryVisitor::detectVariantBaseQueryCalls(CallExpr *call, const FunctionDecl *funcDecl, const std::string &qualifiedName) {
   if (call->getNumArgs() < 1) { // no argument ?, suss
     return;
   }
@@ -51,7 +97,7 @@ void QueryGetVisitor::detectVariantBaseQueryCalls(CallExpr *call, const Function
   printTemplateArguments(funcDecl);
 }
 
-bool QueryGetVisitor::isVariantBasePointer(QualType type) {
+bool QueryVisitor::isVariantBasePointer(QualType type) {
   if (!type->isPointerType()) {
       return false;
   }
@@ -62,7 +108,7 @@ bool QueryGetVisitor::isVariantBasePointer(QualType type) {
   return record && record->getNameAsString() == "VariantBase";
 }
 
-void QueryGetVisitor::printTemplateArguments(const FunctionDecl *funcDecl) {
+void QueryVisitor::printTemplateArguments(const FunctionDecl *funcDecl) {
   const auto *specInfo = funcDecl->getTemplateSpecializationInfo();
   if (!specInfo)
     return;
@@ -80,7 +126,7 @@ void QueryGetVisitor::printTemplateArguments(const FunctionDecl *funcDecl) {
   llvm::outs() << "\n";
 }
 
-void QueryGetVisitor::printTemplateArgument(const TemplateArgument &arg) {
+void QueryVisitor::printTemplateArgument(const TemplateArgument &arg) {
   if (arg.getKind() == TemplateArgument::Type) {
     llvm::outs() << arg.getAsType().getAsString() << " ";
   }

@@ -5,15 +5,16 @@
 
 using namespace clang;
 
-class QueryGetVisitor : public RecursiveASTVisitor<QueryGetVisitor> {
+class QueryVisitor : public RecursiveASTVisitor<QueryVisitor> {
 public:
-  QueryGetVisitor(ASTContext *context, std::set<const FunctionDecl *> &visited)
-      : Context(context), Visited(visited) {}
+  explicit QueryVisitor(ASTContext *context) 
+      : Context(context) {}
 
+  bool VisitCXXMethodDecl(CXXMethodDecl *methodDecl);
   bool VisitCallExpr(CallExpr *call);
 
 private:
-
+  void analyzeMethodBody(Stmt* body);
   void processCurrentCall(CallExpr *call, const FunctionDecl *funcDecl);
   void visitCalledFunctionBody(const FunctionDecl *funcDecl);
   void detectVariantBaseQueryCalls(CallExpr *call, const FunctionDecl *funcDecl, const std::string &qualifiedName);
@@ -22,5 +23,5 @@ private:
   void printTemplateArgument(const TemplateArgument &arg);
 
   ASTContext *Context;
-  std::set<const FunctionDecl *> &Visited;
+  std::set<const FunctionDecl *> Visited;
 };

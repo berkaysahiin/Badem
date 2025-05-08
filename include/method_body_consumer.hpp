@@ -2,7 +2,7 @@
 
 #include "clang/AST/ASTConsumer.h"
 
-#include "method_body_visitor.hpp"
+#include "query_visitor.hpp"
 
 using namespace clang;
 
@@ -13,5 +13,5 @@ public:
   virtual void HandleTranslationUnit(ASTContext &context) override;
 
 private:
-  MethodBodyVisitor Visitor;
+  QueryVisitor Visitor;
 };
